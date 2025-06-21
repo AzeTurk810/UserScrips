@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Codeforces Friends Problem Tracker (Full UI + Submit Time)
 // @namespace    http://tampermonkey.net/
-// @version      0.4.1
+// @version      0.4.1.2
 // @description  Sənin etmədiyin, dostlarının etdiyi sualları tag və rating ilə filtrlə, və vaxtını göstər!
 // @author       AzeTurk810
 // @match        https://codeforces.com/*
@@ -11,9 +11,12 @@
 
 (function () {
     'use strict';
+    if (window.location.pathname != '/') {
+        return;
+    };
     // Toggle düyməsi
     const toggleBtn = document.createElement('button');
-    toggleBtn.textContent = '⇔ Paneli ac';a
+    toggleBtn.textContent = '⇔ Paneli ac';
     toggleBtn.style = "position:fixed; top:10px; right:10px; z-index:10000; padding:6px; background:#007acc; color:#fff; border:none; border-radius:5px; cursor:pointer;";
     document.body.appendChild(toggleBtn);
 
