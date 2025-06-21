@@ -1,0 +1,178 @@
+// ==UserScript==
+// @name         Codeforces Friends Problem Tracker (Full UI + Submit Time)
+// @namespace    http://tampermonkey.net/
+// @version      0.4.1
+// @description  Sənin etmədiyin, dostlarının etdiyi sualları tag və rating ilə filtrlə, və vaxtını göstər!
+// @author       AzeTurk810
+// @match        https://codeforces.com/*
+// @grant        GM_xmlhttpRequest
+// @connect      codeforces.com
+// ==/UserScript==
+
+(function () {
+    'use strict';
+    // Toggle düyməsi
+    const toggleBtn = document.createElement('button');
+    toggleBtn.textContent = '⇔ Paneli ac';a
+    toggleBtn.style = "position:fixed; top:10px; right:10px; z-index:10000; padding:6px; background:#007acc; color:#fff; border:none; border-radius:5px; cursor:pointer;";
+    document.body.appendChild(toggleBtn);
+
+    // Panel (sənin mövcud panelin)
+    const panel = document.createElement('div');
+    panel.id = 'cf-ui';
+    panel.style = "position:fixed; top:40px; right:10px; background:#f9f9f9; padding:15px; border:1px solid #aaa; z-index:9999; font-family:sans-serif; width:340px; box-shadow:0 0 10px rgba(0,0,0,0.2); border-radius:8px; display:block;";
+    panel.innerHTML = `
+        <div id="cf-ui" style="position:fixed; top:10px; right:10px; background:#f9f9f9; padding:15px; border:1px solid #aaa; z-index:9999; font-family:sans-serif; width:320px; box-shadow: 0 0 10px rgba(0,0,0,0.2); border-radius:8px;">
+            <strong>📘 CF Problem Tracker</strong><br><br>
+            <label>🙋‍♂️ Sənin Handle-in:<br>
+                <input type="text" id="cf-handle" value="" style="width:100%"/>
+            </label><br><br>
+
+            <label>📈 Minimum Rating:<br>
+                <input type="number" id="cf-rating" value="1800" style="width:100%"/>
+            </label><br><br>
+            <label>📉 Maksimum Rating:<br>
+                <input type="number" id="cf-maxrating" value="2500" style="width:100%"/>
+            </label><br><br>
+
+            <label>🏷️ Tag-lar (vergüllə) (boş ola bilər):<br>
+                <input type="text" id="cf-tags" value="" style="width:100%"/>
+            </label><br><br>
+
+            <label>👥 Dostlar (vergüllə):<br>
+                <textarea id="cf-friends" rows="3" style="width:100%">Ekber_Ekber,Osman_112</textarea>
+            </label><br><br>
+
+            <button id="cf-run" style="width:100%;padding:6px;background:#007acc;color:white;border:none;border-radius:5px;">🔍 Axtar</button>
+
+            <div id="cf-results" style="margin-top:12px; max-height:400px; overflow:auto; font-size:13px;"></div>
+        </div>
+    `;
+    document.body.appendChild(panel);
+    // Toggle funksiyası
+    toggleBtn.onclick = () => {
+        if (panel.style.display === 'none') {
+            panel.style.display = 'block';
+            toggleBtn.textContent = '⇔ Paneli gizlət';
+        } else {
+            panel.style.display = 'none';
+            toggleBtn.textContent = '⇔ Paneli aç';
+        }
+    };
+    panel.style.display = 'none';
+
+    // ==== Avtomatik Handle Tap ====
+    function detectHandle() {
+        const urlMatch = window.location.pathname.match(/^\/profile\/([^\/]+)/);
+        if (urlMatch) return urlMatch[1];
+        const link = document.querySelector('a[href^="/profile/"]');
+        if (link) return link.textContent.trim();
+
+        return "";
+    }
+
+    document.getElementById("cf-handle").value = detectHandle();
+
+    function getJSON(url) {
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method: "GET",
+                url: url,
+                onload: (res) => {
+                    const data = JSON.parse(res.responseText);
+                    if (data.status === "OK") resolve(data.result);
+                    else reject(data.comment);
+                },
+                onerror: reject
+            });
+        });
+    }
+
+    function formatTime(unixSeconds) {
+        const date = new Date(unixSeconds * 1000);
+        return date.toISOString().replace("T", " ").split(".")[0];
+    }
+
+    async function runTracker() {
+        const handle = document.getElementById("cf-handle").value.trim();
+        const minRating = parseInt(document.getElementById("cf-rating").value);
+        const maxRating = parseInt(document.getElementById("cf-maxrating").value);
+        const tagInput = document.getElementById("cf-tags").value.trim();
+        const friendsInput = document.getElementById("cf-friends").value.trim();
+        const filterTags = tagInput ? tagInput.split(',').map(t => t.trim()).filter(Boolean) : null;
+        const friends = friendsInput.split(',').map(f => f.trim()).filter(Boolean);
+
+        if (!handle || friends.length === 0) {
+            alert("Zəhmət olmasa handle və dostları doldur.");
+            return;
+        }
+
+        const problems = await getJSON("https://codeforces.com/api/problemset.problems");
+        const yourStatus = await getJSON(`https://codeforces.com/api/user.status?handle=${handle}`);
+
+        const yourSolved = new Set();
+        for (let sub of yourStatus) {
+            if (sub.verdict === "OK")
+                yourSolved.add(`${sub.problem.contestId}-${sub.problem.index}`);
+        }
+
+        const friendsSolvedMap = new Map(); // problemID -> {handle, time}
+        for (let friend of friends) {
+            try {
+                const status = await getJSON(`https://codeforces.com/api/user.status?handle=${friend}`);
+                for (let sub of status) {
+                    if (sub.verdict === "OK") {
+                        const pid = `${sub.problem.contestId}-${sub.problem.index}`;
+                        if (!yourSolved.has(pid)) {
+                            const existing = friendsSolvedMap.get(pid);
+                            if (!existing || existing.time < sub.creationTimeSeconds) {
+                                friendsSolvedMap.set(pid, {
+                                    handle: friend,
+                                    time: sub.creationTimeSeconds
+                                });
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn(`Dost handle tapılmadı və ya problem oldu: ${friend}`);
+            }
+        }
+
+        const finalProblems = [];
+        for (let p of problems.problems) {
+            const pid = `${p.contestId}-${p.index}`;
+            if (!friendsSolvedMap.has(pid)) continue;
+            if (!p.rating || p.rating < minRating || p.rating > maxRating) continue;
+            if (filterTags && !p.tags.some(tag => filterTags.includes(tag))) continue;
+            finalProblems.push({
+                ...p,
+                submitter: friendsSolvedMap.get(pid).handle,
+                time: friendsSolvedMap.get(pid).time
+            });
+        }
+
+        // ==== Nəticə Göstər ====
+        const resultsDiv = document.getElementById("cf-results");
+        if (finalProblems.length === 0) {
+            resultsDiv.innerHTML = `<div style="color:red;">Uyğun sual tapılmadı.</div>`;
+            return;
+        }
+
+        resultsDiv.innerHTML = `<b>🔎 ${finalProblems.length} sual tapıldı:</b><ul style="padding-left:18px;">` +
+            finalProblems.map(p =>
+                `<li><a target="_blank" href="https://codeforces.com/problemset/problem/${p.contestId}/${p.index}">
+                    ${p.name}</a> [${p.rating}]<br>
+                 <small style="color:gray;">Tags: ${p.tags.join(", ") || "yoxdur"}</small><br>
+                 <small>👤 ${p.submitter}, 🕒 ${formatTime(p.time)}</small></li>`
+            ).join("") +
+            `</ul>`;
+    }
+
+    document.getElementById("cf-run").addEventListener("click", () => {
+        document.getElementById("cf-results").innerHTML = "⏳ Yüklənir...";
+        runTracker().catch(e => {
+            document.getElementById("cf-results").innerHTML = "❌ Xəta baş verdi: " + e;
+        });
+    });
+})();
